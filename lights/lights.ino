@@ -13,7 +13,7 @@
 #include <BlynkSimpleEsp8266.h>
 
 #define FASTLED_ALLOW_INTERRUPTS 0              //attempting to stop flickering
-//#define FASTLED_INTERRUPT_RETRY_COUNT 0
+#define FASTLED_INTERRUPT_RETRY_COUNT 0
 #define FASTLED_ESP8266_NODEMCU_PIN_ORDER
 #include <FastLED.h>
 
