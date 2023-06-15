@@ -5,44 +5,38 @@
     Description:    This project uses the Blynk IoT platform and a NodeMCU to control a
                     string of WS2812b individually-addressable RGB LEDs.
 ****************************************************************************************/
+#define FASTLED_ALLOW_INTERRUPTS 0
+#define FASTLED_INTERRUPT_RETRY_COUNT 0
+#define FASTLED_ESP8266_NODEMCU_PIN_ORDER
 
-// Libraries, Blynk Initialization
-#define BLYNK_PRINT Serial
-
+#include <FastLED.h>
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 
-#define FASTLED_ALLOW_INTERRUPTS 0              //attempting to stop flickering
-#define FASTLED_INTERRUPT_RETRY_COUNT 0
-#define FASTLED_ESP8266_NODEMCU_PIN_ORDER
-#include <FastLED.h>
-
 #define BLYNK_TEMPLATE_ID   "TMPL29n1f2-uo"
 #define BLYNK_TEMPLATE_NAME "Quickstart Template"
-#define auth    "RGFdCQMxln2JxUaVE14IllFcOcrCCzK9"
+#define AUTH_TOKEN          "RGFdCQMxln2JxUaVE14IllFcOcrCCzK9"
+#define BLYNK_PRINT         Serial
 
-// Your WiFi credentials.
-// Set password to "" for open networks.
+// WiFi credentials.
 #define NETWORK_NAME        "Verizon_7HSJ9F"
 #define NETWORK_PASSWORD    "gap-toddle6-ret"   // Set to "" for open networks.
-//...............................................................................................................................
+
 //FastLED Initialization
-#define DATA_PIN    D2            //D2 in code = D4 on board
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER RGB
-#define NUM_LEDS    200           // Change this to reflect the number of LEDs you have
+#define DATA_PIN            D2            //D2 in code = D4 on board
+#define LED_TYPE            WS2811
+#define COLOR_ORDER         RGB
+#define NUM_LEDS            200           // Change this to reflect the number of LEDs you have
 
 //CRGB leds[NUM_LEDS];
 CRGBArray<NUM_LEDS> leds;
 
 // Overall twinkle speed.
 // 0 (VERY slow) to 8 (VERY fast).  
-// 4, 5, and 6 are recommended, default is 4.
-//#define TWINKLE_SPEED 4
+#define TWINKLE_SPEED 4
 
 // Overall twinkle density.
 // 0 (NONE lit) to 8 (ALL lit at once).  
-// Default is 5.
 #define TWINKLE_DENSITY 5
 
 CRGB gBackgroundColor = CRGB::Black; 
@@ -62,9 +56,14 @@ CRGB gBackgroundColor = CRGB::Black;
 //Global variables
 uint8_t lightsOn;
 uint8_t brightness;
-uint8_t red;
-uint8_t grn;
-uint8_t blu;
+uint8_t redVal;
+uint8_t greenVal;
+uint8_t blueVal;
+uint8_t paletteActive;
+uint8_t twinkleSpeed;
+uint8_t animation;
+uint8_t temperature;
+bool    whiteLight;
 
 extern const TProgmemRGBGradientPalettePtr gGradientPalettes[];
 extern const uint8_t gGradientPaletteCount;
@@ -72,55 +71,72 @@ uint8_t gCurrentPaletteNumber;
 CRGBPalette16 gCurrentPalette( CRGB::Black);
 CRGBPalette16 gTargetPalette( gGradientPalettes[0] );
 
-uint8_t twinkleSpeed;
-uint8_t animation;
-uint8_t paletteActive;
-//....................................................................................................................................
-//Setup function
-void setup()
+/***********************************************************************
+  Blynk Functions
+***********************************************************************/
+// Sync all variables with the cloud.
+BLYNK_CONNECTED()
 {
-  delay(3000);            //Sanity for FastLED
-  Serial.begin(115200);   //Debug console
-  Serial.println("Starting...");
-  
-  Blynk.begin(auth, NETWORK_NAME, NETWORK_PASSWORD);
   Blynk.syncAll();
   Serial.print("Synced");
-  
-  FastLED.addLeds<LED_TYPE,DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  FastLED.setBrightness(brightness);
 }
 
-//.....................................................................................................................................
-//BLYNK_WRITE Functions
-BLYNK_WRITE(V0){                    //Turn lights on/off
+// Turn lights on/off.
+BLYNK_WRITE(V0)
+{
   lightsOn = param.asInt();
 }
 
-BLYNK_WRITE(V1){                    //Set brightness
+// Set brightness.
+BLYNK_WRITE(V1)
+{
   brightness = param.asInt();
 }
 
-BLYNK_WRITE(V2){                    //Set single color
-  red = param[0].asInt();
-  grn = param[1].asInt();
-  blu = param[2].asInt();
+// Set single color.
+BLYNK_WRITE(V2)
+{
+  redVal = param[0].asInt();
+  greenVal = param[1].asInt();
+  blueVal = param[2].asInt();
+  if ((redVal == 255) && (greenVal == 255) && (blueVal == 255))
+  {
+    whiteLight = true;
+  }
+  else
+  {
+    whiteLight = false;
+  }
 }
 
-BLYNK_WRITE(V3){                    //Set palette
+// Set palette.
+BLYNK_WRITE(V3)
+{
   gCurrentPaletteNumber = param.asInt();
 }
 
-BLYNK_WRITE(V4){                    //Set animation
+// Set animation.
+BLYNK_WRITE(V4)
+{
   animation = param.asInt();
 }
 
-BLYNK_WRITE(V5){                    //Decide between solid color or palette
+// Decide between solid color or palette.
+BLYNK_WRITE(V5)
+{
   paletteActive = param.asInt();  
 }
 
-BLYNK_WRITE(V6){                  //Set twinkle speed
+// Set twinkle speed.
+BLYNK_WRITE(V6)
+{
   twinkleSpeed = param.asInt();
+}
+
+// Set temperature for white light.
+BLYNK_WRITE(V7)
+{
+  temperature = param.asInt();
 }
 
 //.......................................................................................................................................
@@ -511,8 +527,7 @@ DEFINE_GRADIENT_PALETTE( bhw1_05_gp ) {
   255,  73,  3,178};
   
 //..............................................................................................................................................  
-// This list of color palettes acts as a "playlist"; you can
-// add or delete, or re-arrange as you wish.
+// This list of color palettes acts as a "playlist"; you can add or delete, or re-arrange as you wish.
 const TProgmemRGBGradientPalettePtr gGradientPalettes[] = {
   Rainbow_gp,                       //you get it                GOOD
   moon_gp,                          //white                     OK
@@ -537,36 +552,61 @@ const TProgmemRGBGradientPalettePtr gGradientPalettes[] = {
   };
 
 // Count of how many cpt-city gradients are defined:
-const uint8_t gGradientPaletteCount = 
-  sizeof( gGradientPalettes) / sizeof( TProgmemRGBGradientPalettePtr );
+const uint8_t gGradientPaletteCount = sizeof( gGradientPalettes) / sizeof( TProgmemRGBGradientPalettePtr );
 
-//.....................................................................................................................................
-//Loop function
-void showLEDs() {
-  if (lightsOn == 0){                 //Lights are off
+
+void showLEDs() 
+{
+  if (lightsOn == 0)                    //Lights are off
+  {
     FastLED.setBrightness(0);
   }
-  else{                               //Lights are on
+  else                                  //Lights are on
+  {
     FastLED.setBrightness(brightness);
-    if (paletteActive == 0){
-      for (int i=0; i<NUM_LEDS; i++){
-        leds[i].r = red;
-        leds[i].g = grn;
-        leds[i].b = blu;
-      }
-    }
-    else{
+    
+    if (paletteActive)
+    {
       nblendPaletteTowardPalette( gCurrentPalette, gTargetPalette, 200);
       gTargetPalette = gGradientPalettes[gCurrentPaletteNumber];
-      if (animation){
+      if (animation)
+      {
         drawTwinkles(leds);
       }
-      else{
+      else
+      {
         scroll(leds, NUM_LEDS, gCurrentPalette);
+      }  
+    }
+    
+    else
+    {
+      if (whiteLight)
+      {
+        redVal = 255;
+        greenVal = 255 - temperature/3;
+        blueVal = 255 - temperature;
       }
+      fill_solid(leds, NUM_LEDS, CRGB(redVal, greenVal, blueVal));
     }
   }
+  
   FastLED.show();
+}
+
+/*****************************************************************************************************
+ * Main Program
+ ****************************************************************************************************/
+void setup()
+{
+  delay(3000);            //Sanity for FastLED
+  Serial.begin(115200);   //Debug console
+  Serial.println("Starting...");
+  
+  Blynk.begin(AUTH_TOKEN, NETWORK_NAME, NETWORK_PASSWORD);
+  
+  FastLED.addLeds<LED_TYPE,DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(brightness);
 }
 
 void loop()
